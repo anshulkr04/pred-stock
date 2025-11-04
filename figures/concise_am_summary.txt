@@ -1,0 +1,11 @@
+Concise AM-only visualization run
+Rows (after filtering to AM and cleaning): 9966
+Present focused features: Sales, Expenses, Operating Profit, OPM %, Other Income, Interest, Depreciation, Profit Before Tax, Tax %, Net Profit, EPS in Rs
+Present targets: 10min-ar_pct, 15min-ar_pct, 20min-ar_pct, 25min-ar_pct, 30min-ar_pct
+
+Top feature (abs corr) per target:
+  10min-ar_pct: Tax % (corr=-0.014)
+  15min-ar_pct: Net Profit (corr=0.014)
+  20min-ar_pct: Tax % (corr=-0.016)
+  25min-ar_pct: Tax % (corr=-0.031)
+  30min-ar_pct: Tax % (corr=-0.028)
