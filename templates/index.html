@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Direction Predictor</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    /* Result card styles (lightweight; you can move to styles.css) */
+    .results-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin-top:14px; }
+    .result-card {
+      background: #0f1724; color:#e6eef8; padding:14px; border-radius:10px;
+      box-shadow: 0 8px 30px rgba(6,10,18,0.12);
+    }
+    .horizon { font-weight:700; font-size:1.05rem; margin-bottom:8px; }
+    .badge { display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border-radius:999px; font-weight:700; }
+    .up { background: rgba(22,163,74,0.12); color:#16a34a; }
+    .down { background: rgba(239,68,68,0.08); color:#ef4444; }
+    .prob-row { margin-top:10px; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .prob-bar { height:10px; background:#1f2937; border-radius:999px; overflow:hidden; width:100%; margin-top:8px; }
+    .prob-fill { height:100%; background: linear-gradient(90deg,#06b6d4,#06d6a0); width:0%; transition: width .6s ease; }
+    .small-muted { font-size:0.85rem; color:#9aa6b2; }
+    .center { text-align:center; }
+    .results-header { margin-top:18px; font-weight:800; font-size:1.2rem; }
+    .dev-screenshot { max-width:240px; border-radius:8px; margin-bottom:12px; display:block; }
+    /* responsive tweak */
+    @media (max-width:540px) {
+      .result-card { padding:12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Quarterly Direction Predictor</h1>
+
+    <!-- optional dev-only screenshot (copy to static/dev_screenshot.png to show) -->
+    <div id="dev-shot">
+      <!-- If you want to show your screenshot during dev, copy it into static/dev_screenshot.png -->
+      <!-- Example: cp "/mnt/data/Screenshot 2025-11-25 at 11.30.58 PM.png" static/dev_screenshot.png -->
+      <!-- <img src="/static/dev_screenshot.png" class="dev-screenshot" alt="dev screenshot" /> -->
+      <p class="muted">Local screenshot (dev): <code>/mnt/data/Screenshot 2025-11-25 at 11.30.58 PM.png</code></p>
+    </div>
+
+    <p>Enter company + current-quarter feature values. If previous-quarter data is missing you'll be prompted.</p>
+
+    <div id="form">
+      <label>Company Symbol</label>
+      <input id="company" placeholder="e.g. KRBL" />
+
+      <label>Row date (YYYY-MM-DD)</label>
+      <input id="row_date" placeholder="2025-08-07" />
+
+      <div id="inputs-area">
+        <p class="muted">Current-quarter base values (enter numbers). The labels are fixed and ordered.</p>
+        <div id="base-fields">
+          {% if required_bases %}
+            {% for b in required_bases %}
+              <div class="field-row fixed-field">
+                <input class="base-name" value="{{ b }}" disabled />
+                <input class="base-val numeric" placeholder="value (numeric)" />
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="muted">No base fields found in server history.</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="buttons">
+        <button id="predict">Predict Directions</button>
+      </div>
+      <div id="status" class="small-muted"></div>
+    </div>
+
+    <!-- prev prompt (shown when server requests previous-quarter values) -->
+    <div id="prev-prompt" class="hidden">
+      <h3>Previous-quarter data required</h3>
+      <p id="need-list"></p>
+      <div id="prev-fields"></div>
+      <div class="buttons" style="margin-top:12px;">
+        <button id="submit-prev">Submit previous data</button>
+        <button id="cancel-prev">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Friendly Results -->
+    <div id="results" class="hidden">
+      <h2 class="results-header">Results</h2>
+      <div id="results-grid" class="results-grid"></div>
+
+      <div style="margin-top:12px;">
+        <button id="back">Make another prediction</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const baseFields = document.getElementById("base-fields");
+  const predictBtn = document.getElementById("predict");
+  const status = document.getElementById("status");
+  const prevPrompt = document.getElementById("prev-prompt");
+  const needList = document.getElementById("need-list");
+  const prevFields = document.getElementById("prev-fields");
+  const submitPrev = document.getElementById("submit-prev");
+  const cancelPrev = document.getElementById("cancel-prev");
+  const resultsDiv = document.getElementById("results");
+  const resultsGrid = document.getElementById("results-grid");
+  const backBtn = document.getElementById("back");
+
+  let lastRequest = null;
+
+  function collectCurrent(){
+    const rows = Array.from(baseFields.querySelectorAll(".field-row"));
+    const out = {};
+    for (const r of rows){
+      const inputs = r.querySelectorAll("input");
+      const k = (inputs[0].value || "").trim();
+      const v = (inputs[1].value || "").trim();
+      if (!k) continue;
+      if (v === "") continue;
+      const num = parseFloat(v.replace(/,/g,""));
+      if (isNaN(num)){
+        throw new Error("Invalid number for "+k);
+      }
+      out[k] = num;
+    }
+    return out;
+  }
+
+  predictBtn.onclick = async ()=>{
+    status.textContent = "";
+    try {
+      const company = document.getElementById("company").value.trim();
+      const row_date = document.getElementById("row_date").value.trim();
+      if (!company || !row_date) {
+        status.textContent = "Provide company and row_date.";
+        return;
+      }
+      const current = collectCurrent();
+      if (Object.keys(current).length === 0){
+        status.textContent = "Please fill at least one numeric value for current quarter.";
+        return;
+      }
+      const payload = { company, row_date, current };
+      lastRequest = payload;
+      status.textContent = "Sending...";
+      const resp = await fetch("/predict", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+      const j = await resp.json();
+      if (j.needs_prev){
+        // show prev prompt
+        needList.textContent = "Please provide previous-quarter values for: " + j.needs_prev.join(", ");
+        prevFields.innerHTML = "";
+        for (const b of j.needs_prev){
+          const d = document.createElement("div");
+          d.className = "field-row";
+          d.innerHTML = `<input class="prev-name" value="${b}" disabled/><input class="prev-val" placeholder="previous ${b}"/>`;
+          prevFields.appendChild(d);
+        }
+        prevPrompt.classList.remove("hidden");
+        resultsDiv.classList.add("hidden");
+        status.textContent = "";
+        return;
+      }
+      // otherwise show friendly results
+      renderResults(j);
+      status.textContent = "";
+    } catch (err){
+      status.textContent = "Error: "+err.message;
+      console.error(err);
+    }
+  };
+
+  submitPrev.onclick = async ()=>{
+    try {
+      const prevEls = Array.from(prevFields.querySelectorAll(".field-row"));
+      const prev = {};
+      for (const r of prevEls){
+        const key = r.querySelector(".prev-name").value.trim();
+        const val = r.querySelector(".prev-val").value.trim();
+        if (!key) continue;
+        if (val==="") {
+          throw new Error("Fill previous value for " + key);
+        }
+        const n = parseFloat(val.replace(/,/g,""));
+        if (isNaN(n)) throw new Error("Invalid number for " + key);
+        prev[key] = n;
+      }
+      const payload = Object.assign({}, lastRequest, { prev });
+      status.textContent = "Sending previous data...";
+      const resp = await fetch("/predict", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+      const j = await resp.json();
+      if (j.needs_prev){
+        status.textContent = "Server still needs previous values: " + j.needs_prev.join(", ");
+        return;
+      }
+      renderResults(j);
+      status.textContent = "";
+    } catch (err){
+      status.textContent = "Error: "+err.message;
+    }
+  };
+
+  cancelPrev.onclick = ()=>{
+    prevPrompt.classList.add("hidden");
+  };
+
+  backBtn.onclick = ()=>{
+    resultsDiv.classList.add("hidden");
+    prevPrompt.classList.add("hidden");
+    status.textContent = "";
+  };
+
+  // render friendly UI instead of raw JSON
+  function renderResults(resp){
+    resultsGrid.innerHTML = "";
+    // resp.results is an object with keys like "10min-ar_pct"
+    const res = resp.results || {};
+    const order = ["10min-ar_pct", "15min-ar_pct", "20min-ar_pct", "25min-ar_pct", "30min-ar_pct"];
+    for (const k of order){
+      if (!(k in res)) continue;
+      const item = res[k];
+      const proba = Number(item.proba || 0);
+      const thresh = Number(item.threshold || 0.5);
+      const label = Number(item.label || (proba >= thresh ? 1 : 0));
+
+      // friendly horizon label
+      const pretty = k.replace("-ar_pct", "").replace("min", " min");
+
+      const div = document.createElement("div");
+      div.className = "result-card";
+      const upDown = label === 1 ? `<span class="badge up">▲ Up</span>` : `<span class="badge down">▼ Down</span>`;
+      div.innerHTML = `
+        <div class="horizon">${pretty}</div>
+        <div class="center">${upDown}</div>
+        <div class="prob-row">
+          <div class="small-muted">Probability</div>
+          <div class="small-muted">${(proba*100).toFixed(1)}%</div>
+        </div>
+        <div class="prob-bar"><div class="prob-fill" style="width:${(proba*100).toFixed(1)}%"></div></div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+          <div class="small-muted">Threshold: ${(thresh*100).toFixed(0)}%</div>
+          <div class="small-muted">Label: ${label===1 ? "Up" : "Down"}</div>
+        </div>
+      `;
+      resultsGrid.appendChild(div);
+      // small animation: set width after append
+      const fill = div.querySelector(".prob-fill");
+      setTimeout(()=> fill.style.width = `${(proba*100).toFixed(1)}%`, 50);
+    }
+
+    resultsDiv.classList.remove("hidden");
+    prevPrompt.classList.add("hidden");
+  }
+
+})();
+</script>
+</body>
+</html>
