@@ -17,8 +17,20 @@ import warnings
 import xgboost as xgb
 
 # ---- CONFIG ----
-# global for template rendering
-REQUIRED_BASES = []
+# Desired fixed order for base labels (final order sent to front-end)
+DESIRED_BASE_ORDER = [
+    "Sales",
+    "Expenses",
+    "Operating Profit",
+    "OPM %",
+    "Other Income",
+    "Interest",
+    "Depreciation",
+    "Profit before tax",
+    "Tax %",
+    "Net Profit",
+    "EPS in Rs"
+]
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # project root with app/ at top
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -115,9 +127,11 @@ def load_history():
     HIST_DF = df
     print("Loaded history rows:", len(df))
 
-    # compute required base fields from diff_prev columns
+    # compute required base fields from diff_prev columns and sort by DESIRED_BASE_ORDER
     diff_prev_cols = [c for c in df.columns if str(c).endswith("_diff_prev")]
-    REQUIRED_BASES = sorted({c.replace("_diff_prev", "") for c in diff_prev_cols})
+    detected_bases = {c.replace("_diff_prev", "") for c in diff_prev_cols}
+    # Use DESIRED_BASE_ORDER and only include fields that exist in detected_bases
+    REQUIRED_BASES = [b for b in DESIRED_BASE_ORDER if b in detected_bases]
     print("Required base fields:", REQUIRED_BASES)
 
 
@@ -145,7 +159,9 @@ def build_features_for_prediction(hist_df: pd.DataFrame, company: str, row_date:
     prev_prev = prev_rows.iloc[-2] if len(prev_rows) >=2 else None
 
     if prev is None and prev_override is None:
-        required_bases = [c.replace("_diff_prev", "") for c in diff_prev_cols]
+        detected_bases = {c.replace("_diff_prev", "") for c in diff_prev_cols}
+        # Return bases in DESIRED_BASE_ORDER
+        required_bases = [b for b in DESIRED_BASE_ORDER if b in detected_bases]
         # sentinel to indicate frontend should ask for them
         raise ValueError("NO_PREV_DATA", required_bases)
 
@@ -233,7 +249,9 @@ class PredictRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "required_bases": REQUIRED_BASES})
+    # Use DESIRED_BASE_ORDER as the display order for input fields
+    ordered_bases = DESIRED_BASE_ORDER if HIST_DF is None else REQUIRED_BASES
+    return templates.TemplateResponse("index.html", {"request": request, "required_bases": ordered_bases})
 
 
 @app.post("/predict")

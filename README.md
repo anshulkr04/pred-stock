@@ -1,73 +1,184 @@
+# 📈 pred-stock — Quarterly → Short-Horizon Stock Direction Prediction
 
-# pred-stock
+This repository provides a complete workflow for:
 
-Lightweight repo for stock prediction visualizations and analysis. This README explains how to set up a Python virtual environment (macOS / zsh), install dependencies, and run the visualization script `src/vis.py`.
+- Processing quarterly financial data
+- Engineering predictive features (diff_prev, lags, company aggregates)
+- Training ML models to predict short-term market direction (10–30 min)
+- Deploying an interactive FastAPI-based website for predictions
 
-## What this repo contains
+The system uses boosted models (XGBoost, LightGBM, HGB) with a stacked meta-learner to predict "Up/Down" direction over multiple minute-level horizons.
 
-- `data/` — CSV source data (e.g. `quarterly_results_fixed.csv`).
-- `src/vis.py` — visualization script (generates plots into `figures/`).
-- `figures/` — output images produced by `src/vis.py` (already contains example images).
-- `requirements.txt` — pinned Python package dependencies used by the project.
+## 📁 Project Structure
 
+```
+anshulkr04-pred-stock/
+│
+├── train.py                # Train direction models
+├── predict.py              # Single-instance prediction logic
+├── preprocess.py           # Data preprocessing helpers
+│
+├── app/
+│   └── main.py             # FastAPI backend server
+│
+├── templates/
+│   └── index.html          # Frontend UI
+├── static/
+│   └── styles.css          # Styling for the frontend
+│
+├── data/
+│   └── quat.csv            # Quarterly dataset (input)
+│
+├── models/
+│   └── directions/         # Saved models + metrics.json
+│
+├── figures/
+│   ├── concise_am_corr_matrix.csv
+│   ├── concise_am_feature_vs_target_correlations.csv
+│   └── concise_am_summary.txt
+│
+├── src/
+│   └── vis.py              # (Optional) Visualization utilities
+│
+├── requirements.txt
+└── README.md (this file)
+```
 
-## Create and activate a virtual environment (recommended)
+## 🔧 1. Create & activate a virtual environment
 
-1. From the repository root run:
+From the project root:
 
 ```bash
 python3 -m venv .venv
 ```
 
-2. Activate the venv (zsh):
+Activate (macOS / Linux):
 
 ```bash
 source .venv/bin/activate
 ```
 
-3. Upgrade pip and install the project's dependencies:
+Upgrade pip & install dependencies:
 
 ```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Notes:
-- Using a named venv (here `.venv`) keeps dependencies local to the project.
-- On first activation in a new shell you may need to run `source .venv/bin/activate` again.
+## 🏗️ 2. Train the model (required before running the website)
 
-## Run the visualization script
+The training script:
 
-With the virtual environment active and dependencies installed, run:
+- Loads quarterly data from `data/quat.csv`
+- Computes engineered features:
+  - `_diff_prev`
+  - lag features (lag1, lag2)
+  - per-company mean & std
+  - selected interaction terms
+- Computes direction labels (`dir_10min_ar_pct`, etc.)
+- Performs group-aware train/test split by company
+- Trains XGBoost + LightGBM + HGB
+- Performs stacking via Logistic Regression
+- Tunes threshold per target using OOF validation
+- Saves models & metrics to `models/directions/`
+
+Run:
+
+```bash
+python train.py
+```
+
+Expected output:
+
+```
+Loaded rows: 8110
+Valid train rows: ...
+Fold 1/5 ...
+Chosen threshold (meta): 0.35 (OOF F1=0.62)
+Test metrics for 10min-ar_pct:
+ Meta stack -> acc: 0.5849   bal_acc: 0.6307  roc: 0.7060  f1: 0.6258
+ ...
+Done. Model artifacts saved to ./models/directions
+```
+
+After training, the predictor website can use the saved models.
+
+## 🤖 3. How prediction works (predict.py)
+
+`predict.py` contains:
+
+- Loading the saved models (`models/directions/...__all.joblib`)
+- Computing `diff_prev`, lag features, and company aggregates on user input
+- Running the base models → stacking meta model → applying tuned threshold
+- Returning:
+
+```json
+{
+  "10min-ar_pct": { "proba": ..., "threshold": ..., "label": 0/1 },
+  ...
+}
+```
+
+If previous-quarter numbers are missing, the script asks the user for previous data before computing `diff_prev` features.
+
+## 🌐 4. Run the website (FastAPI server)
+
+Start the backend:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Then open:
+
+```
+http://localhost:8000
+```
+
+What the site provides:
+
+- Clean UI for inputting fundamentals (Sales, Expenses, OPM %, EPS, etc.)
+- Automatic preprocessing + feature engineering
+- Short-horizon predictions displayed as:
+  - **10 min**: ▲ Up
+  - **Next 5 min**: ▼ Down
+  - **Next 5 min**: ▲ Up
+  - ...
+- Probability bars and threshold reference
+- Optionally links to your uploaded PDF documentation
+
+## 📊 (Optional) Visualizations
+
+To regenerate correlation matrices or summary statistics:
 
 ```bash
 python src/vis.py
 ```
 
-What to expect:
-- The script reads data from `data/` (for example `data/quarterly_results_fixed.csv`) and writes images into `figures/`.
-- After running, check `figures/` for generated plots such as heatmaps, scatter plots, and summary images.
+Outputs will appear in the `figures/` directory.
 
-If you prefer running from VS Code, open the project folder and select the `.venv` interpreter in the bottom-right status bar or via the Command Palette (Python: Select Interpreter).
+## 🛠 Troubleshooting
 
-## Quick troubleshooting
-
-- "Module not found" or import errors: ensure the virtual environment is activated (`which python` should point inside `.venv`). Reinstall deps with `pip install -r requirements.txt`.
-- Permission errors when writing to `figures/`: ensure the `figures/` directory exists and is writable. Create it manually if missing:
-
-	```bash
-	mkdir -p figures
-	chmod u+w figures
-	```
-
-- If `src/vis.py` expects additional environment variables or config files, check the top of `src/vis.py` for hints (or a `.env` file). This repo includes `python-dotenv` in `requirements.txt` if a `.env` is used.
-
-## Notes on dependencies
-
-This repo pins dependencies in `requirements.txt`. These packages were captured on a recent environment and include (abridged): numpy, pandas, matplotlib, seaborn, scikit-learn, statsmodels, etc. If you run into platform-specific build issues (rare on macOS with wheel support), ensure you have an up-to-date pip and wheel:
+**Model not loading?**  
+Re-run:
 
 ```bash
-python -m pip install --upgrade pip wheel
+python train.py
+```
+
+**Missing dependencies?**  
+Ensure venv is active:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+**FastAPI not running?**  
+Install:
+
+```bash
+pip install fastapi uvicorn
 ```
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

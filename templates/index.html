@@ -31,14 +31,13 @@
 </head>
 <body>
   <div class="container">
-    <h1>Quarterly Direction Predictor</h1>
+    <h1>Stock price Direction Predictor</h1>
 
     <!-- optional dev-only screenshot (copy to static/dev_screenshot.png to show) -->
     <div id="dev-shot">
       <!-- If you want to show your screenshot during dev, copy it into static/dev_screenshot.png -->
       <!-- Example: cp "/mnt/data/Screenshot 2025-11-25 at 11.30.58 PM.png" static/dev_screenshot.png -->
       <!-- <img src="/static/dev_screenshot.png" class="dev-screenshot" alt="dev screenshot" /> -->
-      <p class="muted">Local screenshot (dev): <code>/mnt/data/Screenshot 2025-11-25 at 11.30.58 PM.png</code></p>
     </div>
 
     <p>Enter company + current-quarter feature values. If previous-quarter data is missing you'll be prompted.</p>
@@ -225,15 +224,19 @@
     // resp.results is an object with keys like "10min-ar_pct"
     const res = resp.results || {};
     const order = ["10min-ar_pct", "15min-ar_pct", "20min-ar_pct", "25min-ar_pct", "30min-ar_pct"];
-    for (const k of order){
+    // Intuitive labels: first is "10 min", rest are "next 5 min"
+    const labels = ["10 min", "Next 5 min", "Next 5 min", "Next 5 min", "Next 5 min"];
+    
+    for (let i = 0; i < order.length; i++){
+      const k = order[i];
       if (!(k in res)) continue;
       const item = res[k];
       const proba = Number(item.proba || 0);
       const thresh = Number(item.threshold || 0.5);
       const label = Number(item.label || (proba >= thresh ? 1 : 0));
 
-      // friendly horizon label
-      const pretty = k.replace("-ar_pct", "").replace("min", " min");
+      // Use intuitive progressive labels
+      const pretty = labels[i];
 
       const div = document.createElement("div");
       div.className = "result-card";
