@@ -69,3 +69,6 @@ This repo pins dependencies in `requirements.txt`. These packages were captured 
 ```bash
 python -m pip install --upgrade pip wheel
 ```
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
